@@ -126,7 +126,7 @@ static imgsensor_info_struct imgsensor_info = {
         .custom1 = {    //Copy from cap
                 .pclk = 36000000,
                 .linelength = 947,
-                .framelength = 1583,
+                .framelength = 1584,
                 .startx = 0,
                 .starty = 0,
                 .grabwindow_width = 1600,
@@ -426,11 +426,13 @@ static void write_cmos_sensor0(kal_uint32 addr, kal_uint32 para)
 
 static void set_dummy(void)
 {
-        LOG_INF("dummyline = %d, dummypixels = %d \n", imgsensor.dummy_line, imgsensor.dummy_pixel);
-        /* you can set dummy by imgsensor.dummy_line and imgsensor.dummy_pixel, or you can set dummy by imgsensor.frame_length and imgsensor.line_length */
+        kal_uint32 vb = 10;
+        kal_uint32 basic_line = 1224;
+        vb = imgsensor.frame_length - basic_line;
+        vb = (vb < 10) ? 10 : vb;
         write_cmos_sensor(0xfd, 0x01);
-        write_cmos_sensor(0x05, (imgsensor.dummy_line >> 8) & 0xFF);
-        write_cmos_sensor(0x06, imgsensor.dummy_line & 0xFF);
+        write_cmos_sensor(0x05, (vb >> 8) & 0xFF);
+        write_cmos_sensor(0x06, vb & 0xFF);
         write_cmos_sensor(0x01, 0x01);
 }        /*        set_dummy  */
 
@@ -468,65 +470,16 @@ static void set_max_framerate(UINT16 framerate,kal_bool min_framelength_en)
         set_dummy();
 }        /*        set_max_framerate  */
 
-static void write_shutter(kal_uint16 shutter)
-{
-        write_cmos_sensor(0xfd, 0x01);
-        write_cmos_sensor(0x03, (shutter >> 8) & 0xFF);
-        write_cmos_sensor(0x04, shutter  & 0xFF);
-        write_cmos_sensor(0x01, 0x01);
-        LOG_INF("shutter =%d, framelength =%d\n", shutter,imgsensor.frame_length);
-}
 
-static void set_shutter_frame_length(kal_uint16 shutter, kal_uint16 frame_length)
-{
-    unsigned long flags;
-    kal_uint16 realtime_fps = 0;
-    spin_lock_irqsave(&imgsensor_drv_lock, flags);
-    imgsensor.shutter = shutter;
-    spin_unlock_irqrestore(&imgsensor_drv_lock, flags);
-    spin_lock(&imgsensor_drv_lock);
 
-    if (shutter > imgsensor.min_frame_length - imgsensor_info.margin)
-        imgsensor.frame_length = shutter + imgsensor_info.margin;
-    else
-       imgsensor.frame_length = imgsensor.min_frame_length;
-    if (imgsensor.frame_length > imgsensor_info.max_frame_length)
-        imgsensor.frame_length = imgsensor_info.max_frame_length;
-    spin_unlock(&imgsensor_drv_lock);
 
-    shutter = (shutter < imgsensor_info.min_shutter) ? imgsensor_info.min_shutter : shutter;
-    shutter = (shutter > (imgsensor_info.max_frame_length - imgsensor_info.margin)) ? (imgsensor_info.max_frame_length - imgsensor_info.margin) : shutter;
 
-    if (imgsensor.autoflicker_en) {
-        realtime_fps = imgsensor.pclk / imgsensor.line_length * 10 / imgsensor.frame_length;
-        if(realtime_fps >= 297 && realtime_fps <= 305)
-            set_max_framerate(296,0);
-    else if(realtime_fps >= 147 && realtime_fps <= 150)
-            set_max_framerate(146,0);
-         else {
          // Extend frame length
-            imgsensor.dummy_line = imgsensor.frame_length - imgsensor.min_frame_length;
-            set_dummy();
-         }
-    } else {
-        imgsensor.dummy_line = imgsensor.frame_length - imgsensor.min_frame_length;
-        set_dummy();
-    }
 
     // Update Shutter
-    if (shutter == (imgsensor.frame_length-1))
-        shutter += 1;
 
-    if(shutter > 46080) shutter = 46080;
-    if(shutter < 4) shutter = 4;
 
     //Update Shutter
-    write_cmos_sensor(0xfd, 0x01);
-    write_cmos_sensor(0x03, (shutter>>8) & 0xFF);
-    write_cmos_sensor(0x04, shutter & 0xFF);
-    write_cmos_sensor(0x01, 0x01);
-    LOG_INF("Exit! shutter =%d, framelength =%d\n", shutter,imgsensor.frame_length);
-}
 
 /*************************************************************************
  * FUNCTION
@@ -551,7 +504,54 @@ static void set_shutter(kal_uint16 shutter)
         imgsensor.shutter = shutter;
         spin_unlock_irqrestore(&imgsensor_drv_lock, flags);
 
-        write_shutter(shutter);
+        spin_lock(&imgsensor_drv_lock);
+        if (shutter > imgsensor.min_frame_length - imgsensor_info.margin)
+                imgsensor.frame_length = shutter + imgsensor_info.margin;
+        else
+                imgsensor.frame_length = imgsensor.min_frame_length;
+        if (imgsensor.frame_length > imgsensor_info.max_frame_length)
+                imgsensor.frame_length = imgsensor_info.max_frame_length;
+        spin_unlock(&imgsensor_drv_lock);
+        shutter = (shutter < imgsensor_info.min_shutter) ? imgsensor_info.min_shutter : shutter;
+        shutter = (shutter > (imgsensor_info.max_frame_length - imgsensor_info.margin)) ? (imgsensor_info.max_frame_length - imgsensor_info.margin) : shutter;
+        if (shutter == (imgsensor.frame_length-1))
+                shutter += 1;
+        if(shutter > 46080) shutter = 46080;
+        if(shutter < 4) shutter = 4;
+        write_cmos_sensor(0xfd, 0x01);
+    	write_cmos_sensor(0x03, (shutter>>8) & 0xFF);
+    	write_cmos_sensor(0x04, shutter & 0xFF);
+    	write_cmos_sensor(0x01, 0x01);
+        LOG_INF("Exit! shutter =%d, framelength =%d\n", shutter,imgsensor.frame_length);
+}        /*        set_shutter */
+static void set_shutter_frame_length(kal_uint16 shutter, kal_uint16 frame_length)
+{
+    unsigned long flags;
+       kal_int32 dummy_line = 0;
+    spin_lock_irqsave(&imgsensor_drv_lock, flags);
+    imgsensor.shutter = shutter;
+    spin_unlock_irqrestore(&imgsensor_drv_lock, flags);
+    spin_lock(&imgsensor_drv_lock);
+       if (frame_length > 1)
+          dummy_line = frame_length - imgsensor.frame_length;
+       imgsensor.frame_length = imgsensor.frame_length + dummy_line;
+       if (shutter > imgsensor.frame_length - imgsensor_info.margin)
+          imgsensor.frame_length = shutter + imgsensor_info.margin;
+    if (imgsensor.frame_length > imgsensor_info.max_frame_length)
+        imgsensor.frame_length = imgsensor_info.max_frame_length;
+    spin_unlock(&imgsensor_drv_lock);
+    shutter = (shutter < imgsensor_info.min_shutter) ? imgsensor_info.min_shutter : shutter;
+    shutter = (shutter > (imgsensor_info.max_frame_length - imgsensor_info.margin)) ? (imgsensor_info.max_frame_length - imgsensor_info.margin) : shutter;
+    set_dummy();
+    if (shutter == (imgsensor.frame_length-1))
+        shutter += 1;
+    if(shutter > 46080) shutter = 46080;
+    if(shutter < 4) shutter = 4;
+    write_cmos_sensor(0xfd, 0x01);
+    write_cmos_sensor(0x03, (shutter>>8) & 0xFF);
+    write_cmos_sensor(0x04, shutter & 0xFF);
+    write_cmos_sensor(0x01, 0x01);
+    LOG_INF("Exit! shutter =%d, framelength =%d\n", shutter,imgsensor.frame_length);
 }
 #if 0
 static kal_uint16 gain2reg(const kal_uint16 gain)
@@ -752,10 +752,10 @@ static void sensor_init(void)
                 write_cmos_sensor(0xb1,0x01);
                 //write_cmos_sensor(0xac,0x01);
                 write_cmos_sensor(0xfd,0x01);
-                write_cmos_sensor(0xf0,0xfd);//gb_suboffset
-                write_cmos_sensor(0xf1,0xfd);//blue_suboffset
-                write_cmos_sensor(0xf2,0xfd);//red_suboffset
-                write_cmos_sensor(0xf3,0xfd);//gr_suboffset
+                write_cmos_sensor(0xf0,0x40);//gb_suboffset
+                write_cmos_sensor(0xf1,0x40);//blue_suboffset
+                write_cmos_sensor(0xf2,0x40);//red_suboffset
+                write_cmos_sensor(0xf3,0x40);//gr_suboffset
                 write_cmos_sensor(0xf4,0x00);//shift_gb
                 write_cmos_sensor(0xf5,0x00);//shift_blue
                 write_cmos_sensor(0xf6,0x00);//shift_red
@@ -787,6 +787,9 @@ static void preview_setting(void)
 {
 
         write_cmos_sensor(0xfd,0x01);
+        write_cmos_sensor(0x05,0x00);
+        write_cmos_sensor(0x06,0x0a);
+		write_cmos_sensor(0x01,0x01);
         write_cmos_sensor(0xac,0x01);
         /********************************************************
          *
@@ -801,6 +804,9 @@ static void preview_setting(void)
 static void capture_setting(kal_uint16 currefps)
 {
         write_cmos_sensor(0xfd,0x01);
+        write_cmos_sensor(0x05,0x00);
+        write_cmos_sensor(0x06,0x0a);
+		write_cmos_sensor(0x01,0x01);
         write_cmos_sensor(0xac,0x01);
 
 }        /*        capture_setting  */
@@ -808,6 +814,9 @@ static void capture_setting(kal_uint16 currefps)
 static void normal_video_setting(kal_uint16 currefps)
 {
         write_cmos_sensor(0xfd,0x01);
+        write_cmos_sensor(0x05,0x00);
+        write_cmos_sensor(0x06,0x0a);
+		write_cmos_sensor(0x01,0x01);
         write_cmos_sensor(0xac,0x01);
 
 }        /*        preview_setting  */
@@ -817,6 +826,8 @@ static void video_1080p_setting(void)
 {
 
         write_cmos_sensor(0xfd,0x01);
+        write_cmos_sensor(0x05,0x00);
+        write_cmos_sensor(0x06,0x0a);
         write_cmos_sensor(0xac,0x01);
 
 }        /*        preview_setting  */
@@ -824,6 +835,9 @@ static void video_1080p_setting(void)
 static void video_720p_setting(void)
 {
         write_cmos_sensor(0xfd,0x01);
+        write_cmos_sensor(0x05,0x00);
+        write_cmos_sensor(0x06,0x0a);
+		write_cmos_sensor(0x01,0x01);
         write_cmos_sensor(0xac,0x01);
 }        /*        preview_setting  */
 
@@ -846,7 +860,8 @@ static void custom1_setting(void)
 {
         write_cmos_sensor(0xfd,0x01);
 		write_cmos_sensor(0x05,0x01);
-        write_cmos_sensor(0x06,0x67);
+        write_cmos_sensor(0x06,0x68);
+		write_cmos_sensor(0x01,0x01);
         write_cmos_sensor(0xac,0x01);
         
 }        /*        custom1_setting  */
